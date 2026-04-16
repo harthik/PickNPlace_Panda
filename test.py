@@ -4,6 +4,7 @@ import numpy as np
 import cv2 as cv
 from numpy import random
 import time
+from scipy.spatial.transform import Rotation as R
 
 class sim:
     def __init__(self):
@@ -112,7 +113,19 @@ class camera:
             c = ev@nv/(np.linalg.norm(ev)*np.linalg.norm(nv))
             angle = np.arccos(np.clip(c,-1.0,1.0))
             print("angle",np.rad2deg(angle))
+        #print("x,y,z",x,y,z)
+        #cTo = self.transform([x,y,z],[angle,0,0],1)
+        #print("cTo",cTo)
         wTc = self.wTc
+        #print("wTc",wTc)
+        #wTo = wTc@cTo
+        #print("wTo",wTo)
+        #print(wTo[:3, :3])
+        # Create Rotation object from matrix
+        #rot = R.from_matrix(wTo[:3,:3])
+
+        #euler_angles = rot.as_euler('xyz', degrees=True)
+        #print(euler_angles)
         rot = wTc@[[x],[y],[z],[1]]
         print("Pos",rot)
         return -angle, rot
@@ -134,12 +147,8 @@ class camera:
 if __name__ == "__main__":
     # Setup Simulation
     sim = sim()
-    panda = robot()
+    #panda = robot()
     camera = camera(position=[0, 0, 1.6], orientation=[0, -90, 0])
-    keys = ['id','angle','pos']
-    jenga_list = []
-    jenga_id = []
-    camera.get_image()
 
     p.addUserDebugLine([0,0,1.6], [0,0,1.5], 
                    lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
@@ -152,73 +161,16 @@ if __name__ == "__main__":
                    lineColorRGB=[0, 1, 0], lineWidth=2, lifeTime=0)
     p.addUserDebugLine([0,0,1.6], camera_z[:3], 
                    lineColorRGB=[0, 0, 1], lineWidth=2, lifeTime=0)
-    for n in range(1):
-        id = sim.spawn_jenga(position=[random.uniform(-0.2, 0), random.uniform(-0.2,0), 0.6], 
-                                orientation=p.getQuaternionFromEuler([0, 0, random.uniform(0, np.pi)]))
-        jenga_id.append(id)
     
-    # Simulation update to let everything spawn and settle.
+    id = sim.spawn_jenga(position=[0, 0, 0.6], 
+                            orientation=p.getQuaternionFromEuler([0, 0, np.deg2rad(10)]))
+
     for _ in range(480):
         p.stepSimulation()
-        time.sleep(1/240)
+        time.sleep(1./240.)
     camera.get_image()
+    angle,pos = camera.get_object_orn(id)
 
-
-    # Get object positions and orientations of jenga blocks    
-    #for id in jenga_id:
-    #    print(id)
-    #    angle,pos = camera.get_object_orn(jenga_id[0])
-    #    jenga_list.append(dict(zip(keys, [id, angle, pos])))
-    #print(jenga_list)
-    for _ in range(480):
-        p.stepSimulation()
-        time.sleep(1/240)
-    camera.get_image()
-
-    # For debugging
-    actual_pos,_ = p.getBasePositionAndOrientation(jenga_id[0])
-    angle,pos = camera.get_object_orn(jenga_id[0])
-    # For debugging
-
-    # Open gripper
-    panda.ef_control(0)
-    for _ in range(240):
-        p.stepSimulation()
-        time.sleep(1/240)
-
-    # Set target position and orientation above block
-    target_pos = [pos[0],pos[1],pos[2]+0.1]
-    target_orn = p.getQuaternionFromEuler([np.pi,0,angle])
-    current_pos,current_orn = panda.get_end_effector_state()
-    panda.move(target_pos,target_orn)
-    for _ in range(240):
-        p.stepSimulation()
-        time.sleep(1/240)
-
-    # Set target position and orientation to pick block
-    target_pos = [pos[0],pos[1],pos[2]]
-    target_orn = p.getQuaternionFromEuler([np.pi,0,angle])
-    current_pos,current_orn = panda.get_end_effector_state()
-    panda.move(target_pos,target_orn)
-    for _ in range(240):
-        p.stepSimulation()
-        time.sleep(1/240)
-
-    # Close gripper
-    panda.ef_control(1)
-    for _ in range(240):
-        p.stepSimulation()
-        time.sleep(1/240)
-
-    # Move to drop location
-    panda.move([0.2,0.2,1],target_orn)
-
-    # For debuging
-    #print("actual pos",actual_pos)
-    #print("target pos",target_pos)
-    # For debuging
-    
-    camera.get_image()
     while True:
         p.stepSimulation()
         time.sleep(1./240.)
