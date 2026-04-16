@@ -36,7 +36,6 @@ class robot:
             forces=[500] * 7,
             positionGains=[0.01] * 7,
             velocityGains=[0.5] * 7)
-        # add end effector control
     def ef_control(self,state):
         if state == False:
             ef_pos = [0.15] * 2
@@ -85,6 +84,11 @@ class camera:
         body_ids = seg & ((1 << 24) - 1)
         mask = (body_ids == object_id)
 
+        depth_mask = np.argwhere(mask)
+        depth_img = self.depthImg[depth_mask[:,0],depth_mask[:,1]]
+        mask = mask.astype(np.uint8)
+        max_depth = depth_img.min()
+
         mask = mask.astype(np.uint8)
         mask *= 255
         contours, _  = cv.findContours(mask,cv.RETR_TREE,cv.CHAIN_APPROX_SIMPLE)
@@ -115,7 +119,7 @@ class camera:
         wTc = self.wTc
         rot = wTc@[[x],[y],[z],[1]]
         print("Pos",rot)
-        return -angle, rot
+        return -angle, rot, max_depth
     def transform(self,position,angle,key):
         x = position[0]
         y = position[1]
@@ -136,24 +140,13 @@ if __name__ == "__main__":
     sim = sim()
     panda = robot()
     camera = camera(position=[0, 0, 1.6], orientation=[0, -90, 0])
-    keys = ['id','angle','pos']
+    keys = ['id','angle','pos','max_depth']
     jenga_list = []
     jenga_id = []
     camera.get_image()
 
-    p.addUserDebugLine([0,0,1.6], [0,0,1.5], 
-                   lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
-    camera_x = camera.wTc@[0.1,0,0,1]
-    camera_y = camera.wTc@[0,0.1,0,1]
-    camera_z = camera.wTc@[0,0,0.1,1]
-    p.addUserDebugLine([0,0,1.6], camera_x[:3], 
-                   lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
-    p.addUserDebugLine([0,0,1.6], camera_y[:3], 
-                   lineColorRGB=[0, 1, 0], lineWidth=2, lifeTime=0)
-    p.addUserDebugLine([0,0,1.6], camera_z[:3], 
-                   lineColorRGB=[0, 0, 1], lineWidth=2, lifeTime=0)
-    for n in range(1):
-        id = sim.spawn_jenga(position=[random.uniform(-0.2, 0), random.uniform(-0.2,0), 0.6], 
+    for n in range(6):
+        id = sim.spawn_jenga(position=[random.uniform(-0.1, 0.1), random.uniform(-0.2,0.2), random.uniform(0.6,0.7)], 
                                 orientation=p.getQuaternionFromEuler([0, 0, random.uniform(0, np.pi)]))
         jenga_id.append(id)
     
@@ -165,20 +158,17 @@ if __name__ == "__main__":
 
 
     # Get object positions and orientations of jenga blocks    
-    #for id in jenga_id:
-    #    print(id)
-    #    angle,pos = camera.get_object_orn(jenga_id[0])
-    #    jenga_list.append(dict(zip(keys, [id, angle, pos])))
-    #print(jenga_list)
+    for id in jenga_id:
+        print(id)
+        angle,pos,max_depth = camera.get_object_orn(id)
+        jenga_list.append(dict(zip(keys, [id, angle, pos[:3],max_depth])))
+    
+    jenga_sorted = sorted(jenga_list,key=lambda x:x['max_depth'])
+    print(jenga_sorted)
     for _ in range(480):
         p.stepSimulation()
         time.sleep(1/240)
     camera.get_image()
-
-    # For debugging
-    actual_pos,_ = p.getBasePositionAndOrientation(jenga_id[0])
-    angle,pos = camera.get_object_orn(jenga_id[0])
-    # For debugging
 
     # Open gripper
     panda.ef_control(0)

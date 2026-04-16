@@ -8,7 +8,7 @@ from scipy.spatial.transform import Rotation as R
 
 class sim:
     def __init__(self):
-        p.connect(p.GUI)
+        p.connect(p.DIRECT)
         p.setGravity(0,0,-9.81)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.loadURDF("plane.urdf")
@@ -85,8 +85,11 @@ class camera:
 
         body_ids = seg & ((1 << 24) - 1)
         mask = (body_ids == object_id)
-
+        depth_mask = np.argwhere(mask)
+        depth_img = self.depthImg[depth_mask[:,0],depth_mask[:,1]]
         mask = mask.astype(np.uint8)
+        max_depth = depth_img.min()
+        print("max",max_depth)
         mask *= 255
         contours, _  = cv.findContours(mask,cv.RETR_TREE,cv.CHAIN_APPROX_SIMPLE)
 
@@ -103,13 +106,13 @@ class camera:
             edges = []
             n = -1
             for _ in range(len(box)):
-                box
                 length = [(box[n][0] - box[n+1][0]),(box[n][1] - box[n+1][1])]
                 n+=1
                 edges.append(length)
             edges.sort(key=lambda x: x[0]**2 + x[1]**2)
             ev = np.array([abs(edges[-1][0]),abs(edges[-1][1])])
             nv = np.array([1,0])
+            print(np.max(self.depthImg))
             c = ev@nv/(np.linalg.norm(ev)*np.linalg.norm(nv))
             angle = np.arccos(np.clip(c,-1.0,1.0))
             print("angle",np.rad2deg(angle))
@@ -128,7 +131,7 @@ class camera:
         #print(euler_angles)
         rot = wTc@[[x],[y],[z],[1]]
         print("Pos",rot)
-        return -angle, rot
+        return -angle, rot,max_depth
     def transform(self,position,angle,key):
         x = position[0]
         y = position[1]
@@ -147,29 +150,45 @@ class camera:
 if __name__ == "__main__":
     # Setup Simulation
     sim = sim()
-    #panda = robot()
     camera = camera(position=[0, 0, 1.6], orientation=[0, -90, 0])
 
-    p.addUserDebugLine([0,0,1.6], [0,0,1.5], 
-                   lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
-    camera_x = camera.wTc@[0.1,0,0,1]
-    camera_y = camera.wTc@[0,0.1,0,1]
-    camera_z = camera.wTc@[0,0,0.1,1]
-    p.addUserDebugLine([0,0,1.6], camera_x[:3], 
-                   lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
-    p.addUserDebugLine([0,0,1.6], camera_y[:3], 
-                   lineColorRGB=[0, 1, 0], lineWidth=2, lifeTime=0)
-    p.addUserDebugLine([0,0,1.6], camera_z[:3], 
-                   lineColorRGB=[0, 0, 1], lineWidth=2, lifeTime=0)
-    
-    id = sim.spawn_jenga(position=[0, 0, 0.6], 
-                            orientation=p.getQuaternionFromEuler([0, 0, np.deg2rad(10)]))
 
+    #p.addUserDebugLine([0,0,1.6], [0,0,1.5], 
+    #               lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
+    #camera_x = camera.wTc@[0.1,0,0,1]
+    #camera_y = camera.wTc@[0,0.1,0,1]
+    #camera_z = camera.wTc@[0,0,0.1,1]
+    #p.addUserDebugLine([0,0,1.6], camera_x[:3], 
+    #               lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
+    #p.addUserDebugLine([0,0,1.6], camera_y[:3], 
+    #               lineColorRGB=[0, 1, 0], lineWidth=2, lifeTime=0)
+    #p.addUserDebugLine([0,0,1.6], camera_z[:3], 
+    #               lineColorRGB=[0, 0, 1], lineWidth=2, lifeTime=0)
+    
+    keys = ['id','angle','pos','max_depth']
+    jenga_list = []
+    jenga_id = []
+    for n in range(6):
+        id = sim.spawn_jenga(position=[random.uniform(-0.1, 0), random.uniform(-0.2,0.1), random.uniform(0.6,0.7)], 
+                                orientation=p.getQuaternionFromEuler([0, 0, random.uniform(0, np.pi)]))
+        jenga_id.append(id)
+    
     for _ in range(480):
         p.stepSimulation()
-        time.sleep(1./240.)
+        time.sleep(1/240)
     camera.get_image()
-    angle,pos = camera.get_object_orn(id)
+    # Get object positions and orientations of jenga blocks    
+    for id in jenga_id:
+        print(id)
+        angle,pos,max_depth = camera.get_object_orn(id)
+        jenga_list.append(dict(zip(keys, [id, angle, pos[:3],max_depth])))
+    
+    jenga_sorted = sorted(jenga_list,key=lambda x:x['max_depth'])
+    print(jenga_sorted)
+    for _ in range(480):
+        p.stepSimulation()
+        time.sleep(1/240)
+    camera.get_image()
 
     while True:
         p.stepSimulation()
