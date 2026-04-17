@@ -2,9 +2,8 @@
 Pick and place pipeline using panda robot arm
 
 # Video
-<video controls width="640" height="480">
-  <source src="PickNPlace_Panda.mp4" type="video/mp4">
-</video>
+PickNPlace_Panda.mp4
+
 
 # Vision Processing
 The position of the blocks is caclulated in the camera frame
