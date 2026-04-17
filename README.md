@@ -2,7 +2,7 @@
 Pick and place pipeline using panda robot arm
 
 # Video
-[PickNPlace_Panda.mp4](https://youtu.be/kwYf8W0y8AQ)
+[![PickNPlace_Panda.mp4](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://youtu.be/kwYf8W0y8AQ)
 
 
 # Vision Processing
