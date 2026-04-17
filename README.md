@@ -1,6 +1,10 @@
 # PickNPlace_Panda
 Pick and place pipeline using panda robot arm
 
+# Video
+<video controls width="640" height="480">
+  <source src="PickNPlace_Panda.mp4" type="video/mp4">
+</video>
 # Vision Processing
 The position of the blocks is caclulated in the camera frame
 Segmentation mask
@@ -17,3 +21,4 @@ Position and rotation transformed to world frame
 Position used to solve IK and move arm
         |
 Pick block and place ant set location
+
