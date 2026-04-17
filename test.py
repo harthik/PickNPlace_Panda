@@ -4,11 +4,10 @@ import numpy as np
 import cv2 as cv
 from numpy import random
 import time
-from scipy.spatial.transform import Rotation as R
 
 class sim:
     def __init__(self):
-        p.connect(p.DIRECT)
+        p.connect(p.GUI)
         p.setGravity(0,0,-9.81)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.loadURDF("plane.urdf")
@@ -37,33 +36,32 @@ class robot:
             forces=[500] * 7,
             positionGains=[0.01] * 7,
             velocityGains=[0.5] * 7)
-        # add end effector control
     def ef_control(self,state):
         if state == False:
             ef_pos = [0.15] * 2
         elif state == True:
-            ef_pos = [0.02] * 2
+            ef_pos = [0.01] * 2
         p.setJointMotorControlArray(self.robotId, 
                 [9,10], 
                 p.POSITION_CONTROL, 
                 targetPositions=ef_pos,
-                forces=[1000] * 2,
+                forces=[200] * 2,
                 positionGains=[0.1] * 2)
 
 
 
 class camera:
     def __init__(self, position,orientation):
-        self.position = position # change this to target position and distance
+        self.position = position
         self.orientation = orientation
         self.W = 320
         self.H = 240
         self.fov = 60
         self.aspect = self.W / self.H
         self.fy = self.H / (2 * np.tan(np.deg2rad(self.fov) / 2))
-        self.fx = self.fy * self.aspect
-        self.cx = self.W / 2
-        self.cy = self.H / 2
+        self.fx = self.fy
+        self.cx = (self.W - 1) / 2
+        self.cy = (self.H - 1) / 2
         self.near = 0.5
         self.far = 1.0
         self.wTc = self.transform(position,np.deg2rad(orientation),2)
@@ -85,11 +83,12 @@ class camera:
 
         body_ids = seg & ((1 << 24) - 1)
         mask = (body_ids == object_id)
+
         depth_mask = np.argwhere(mask)
         depth_img = self.depthImg[depth_mask[:,0],depth_mask[:,1]]
         mask = mask.astype(np.uint8)
         max_depth = depth_img.min()
-        print("max",max_depth)
+
         mask *= 255
         contours, _  = cv.findContours(mask,cv.RETR_TREE,cv.CHAIN_APPROX_SIMPLE)
 
@@ -97,41 +96,17 @@ class camera:
             rect = cv.minAreaRect(contour)
             u = round(rect[0][0])
             v = round(rect[0][1])+1
+            print(u,v)
             depth = self.depthImg[u,v]
             x = self.far * self.near / (self.far - (self.far - self.near) * depth)
-            print(u,v)
             z = (u - self.cx) * x / self.fx
             y = (self.cy - v) * x / self.fy
-            box = cv.boxPoints(rect)
-            edges = []
-            n = -1
-            for _ in range(len(box)):
-                length = [(box[n][0] - box[n+1][0]),(box[n][1] - box[n+1][1])]
-                n+=1
-                edges.append(length)
-            edges.sort(key=lambda x: x[0]**2 + x[1]**2)
-            ev = np.array([abs(edges[-1][0]),abs(edges[-1][1])])
-            nv = np.array([1,0])
-            print(np.max(self.depthImg))
-            c = ev@nv/(np.linalg.norm(ev)*np.linalg.norm(nv))
-            angle = np.arccos(np.clip(c,-1.0,1.0))
-            print("angle",np.rad2deg(angle))
-        #print("x,y,z",x,y,z)
-        #cTo = self.transform([x,y,z],[angle,0,0],1)
-        #print("cTo",cTo)
+            M = cv.moments(contour)
+            if M["m00"] != 0:
+                angle = 0.5 * np.arctan2(2 * M["mu11"], M["mu20"] - M["mu02"])
         wTc = self.wTc
-        #print("wTc",wTc)
-        #wTo = wTc@cTo
-        #print("wTo",wTo)
-        #print(wTo[:3, :3])
-        # Create Rotation object from matrix
-        #rot = R.from_matrix(wTo[:3,:3])
-
-        #euler_angles = rot.as_euler('xyz', degrees=True)
-        #print(euler_angles)
         rot = wTc@[[x],[y],[z],[1]]
-        print("Pos",rot)
-        return -angle, rot,max_depth
+        return angle, rot, max_depth
     def transform(self,position,angle,key):
         x = position[0]
         y = position[1]
@@ -145,51 +120,48 @@ class camera:
         elif key == 3:
             angle = angle[2]
             return np.array([[np.cos(angle),np.sin(angle),0,x],[-np.sin(angle),np.cos(angle),0,y],[0,0,1,z],[0,0,0,1]])
+    def workspace(self, target_ids):
+        c1 = 100
+        c2 = 219
+        r1 = 120
+        r2 = 239
+        seg = np.array(self.segImg)
+        obj_ids = seg & ((1 << 24) - 1)
+
+        mask = np.isin(obj_ids, target_ids)
+        result = np.any(mask[r1:r2, c1:c2])
+        return result
  
 
 if __name__ == "__main__":
     # Setup Simulation
     sim = sim()
+    panda = robot()
     camera = camera(position=[0, 0, 1.6], orientation=[0, -90, 0])
+    camera.get_image()
 
-
-    #p.addUserDebugLine([0,0,1.6], [0,0,1.5], 
-    #               lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
-    #camera_x = camera.wTc@[0.1,0,0,1]
-    #camera_y = camera.wTc@[0,0.1,0,1]
-    #camera_z = camera.wTc@[0,0,0.1,1]
-    #p.addUserDebugLine([0,0,1.6], camera_x[:3], 
-    #               lineColorRGB=[1, 0, 0], lineWidth=2, lifeTime=0)
-    #p.addUserDebugLine([0,0,1.6], camera_y[:3], 
-    #               lineColorRGB=[0, 1, 0], lineWidth=2, lifeTime=0)
-    #p.addUserDebugLine([0,0,1.6], camera_z[:3], 
-    #               lineColorRGB=[0, 0, 1], lineWidth=2, lifeTime=0)
+    id = sim.spawn_jenga(position=[random.uniform(-0.1, 0.1), random.uniform(-0.1,0.1), random.uniform(0.6,0.7)], 
+                            orientation=p.getQuaternionFromEuler([0, 0, random.uniform(0, np.pi)]))
     
-    keys = ['id','angle','pos','max_depth']
-    jenga_list = []
-    jenga_id = []
-    for n in range(6):
-        id = sim.spawn_jenga(position=[random.uniform(-0.1, 0), random.uniform(-0.2,0.1), random.uniform(0.6,0.7)], 
-                                orientation=p.getQuaternionFromEuler([0, 0, random.uniform(0, np.pi)]))
-        jenga_id.append(id)
-    
+    # Simulation update to let everything spawn and settle.
     for _ in range(480):
         p.stepSimulation()
         time.sleep(1/240)
     camera.get_image()
-    # Get object positions and orientations of jenga blocks    
-    for id in jenga_id:
-        print(id)
-        angle,pos,max_depth = camera.get_object_orn(id)
-        jenga_list.append(dict(zip(keys, [id, angle, pos[:3],max_depth])))
-    
-    jenga_sorted = sorted(jenga_list,key=lambda x:x['max_depth'])
-    print(jenga_sorted)
+    status = camera.workspace(id)
+
+    # Get object positions and orientations of jenga blocks
+    angle,pos,max_depth = camera.get_object_orn(id)
+    print("angle",np.rad2deg(angle))
+    print("pos",pos)
+
+    target_pos = [pos[0],pos[1],pos[2]+0.1]
+    target_orn = p.getQuaternionFromEuler([np.pi,0,-angle])
+    panda.move(target_pos,target_orn)
     for _ in range(480):
         p.stepSimulation()
         time.sleep(1/240)
     camera.get_image()
-
-    while True:
-        p.stepSimulation()
-        time.sleep(1./240.)
+    #while True:
+    #    p.stepSimulation()
+    #    time.sleep(1./240.)

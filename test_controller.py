@@ -40,28 +40,28 @@ class robot:
         if state == False:
             ef_pos = [0.15] * 2
         elif state == True:
-            ef_pos = [0.02] * 2
+            ef_pos = [0.01] * 2
         p.setJointMotorControlArray(self.robotId, 
                 [9,10], 
                 p.POSITION_CONTROL, 
                 targetPositions=ef_pos,
-                forces=[1000] * 2,
-                positionGains=[0.1] * 2)
+                forces=[160] * 2,
+                positionGains=[0.2] * 2)
 
 
 
 class camera:
     def __init__(self, position,orientation):
-        self.position = position # change this to target position and distance
+        self.position = position
         self.orientation = orientation
         self.W = 320
         self.H = 240
         self.fov = 60
         self.aspect = self.W / self.H
         self.fy = self.H / (2 * np.tan(np.deg2rad(self.fov) / 2))
-        self.fx = self.fy * self.aspect
-        self.cx = self.W / 2
-        self.cy = self.H / 2
+        self.fx = self.fy
+        self.cx = (self.W - 1) / 2
+        self.cy = (self.H - 1) / 2
         self.near = 0.5
         self.far = 1.0
         self.wTc = self.transform(position,np.deg2rad(orientation),2)
@@ -89,7 +89,6 @@ class camera:
         mask = mask.astype(np.uint8)
         max_depth = depth_img.min()
 
-        mask = mask.astype(np.uint8)
         mask *= 255
         contours, _  = cv.findContours(mask,cv.RETR_TREE,cv.CHAIN_APPROX_SIMPLE)
 
@@ -97,28 +96,15 @@ class camera:
             rect = cv.minAreaRect(contour)
             u = round(rect[0][0])
             v = round(rect[0][1])+1
-            depth = self.depthImg[u,v]
+            depth = self.depthImg[v,u]
             x = self.far * self.near / (self.far - (self.far - self.near) * depth)
-            print(u,v)
             z = (u - self.cx) * x / self.fx
             y = (self.cy - v) * x / self.fy
-            box = cv.boxPoints(rect)
-            edges = []
-            n = -1
-            for _ in range(len(box)):
-                box
-                length = [(box[n][0] - box[n+1][0]),(box[n][1] - box[n+1][1])]
-                n+=1
-                edges.append(length)
-            edges.sort(key=lambda x: x[0]**2 + x[1]**2)
-            ev = np.array([abs(edges[-1][0]),abs(edges[-1][1])])
-            nv = np.array([1,0])
-            c = ev@nv/(np.linalg.norm(ev)*np.linalg.norm(nv))
-            angle = np.arccos(np.clip(c,-1.0,1.0))
-            print("angle",np.rad2deg(angle))
+            M = cv.moments(contour)
+            if M["m00"] != 0:
+                angle = 0.5 * np.arctan2(2 * M["mu11"], M["mu20"] - M["mu02"])
         wTc = self.wTc
         rot = wTc@[[x],[y],[z],[1]]
-        print("Pos",rot)
         return -angle, rot, max_depth
     def transform(self,position,angle,key):
         x = position[0]
@@ -133,6 +119,17 @@ class camera:
         elif key == 3:
             angle = angle[2]
             return np.array([[np.cos(angle),np.sin(angle),0,x],[-np.sin(angle),np.cos(angle),0,y],[0,0,1,z],[0,0,0,1]])
+    def workspace(self, target_ids):
+        c1 = 100
+        c2 = 219
+        r1 = 120
+        r2 = 239
+        seg = np.array(self.segImg)
+        obj_ids = seg & ((1 << 24) - 1)
+
+        mask = np.isin(obj_ids, target_ids)
+        result = np.any(mask[r1:r2, c1:c2])
+        return result
  
 
 if __name__ == "__main__":
@@ -140,13 +137,11 @@ if __name__ == "__main__":
     sim = sim()
     panda = robot()
     camera = camera(position=[0, 0, 1.6], orientation=[0, -90, 0])
-    keys = ['id','angle','pos','max_depth']
-    jenga_list = []
     jenga_id = []
     camera.get_image()
-
-    for n in range(6):
-        id = sim.spawn_jenga(position=[random.uniform(-0.1, 0.1), random.uniform(-0.2,0.2), random.uniform(0.6,0.7)], 
+    num_blocks = 6
+    for n in range(num_blocks):
+        id = sim.spawn_jenga(position=[random.uniform(-0.1, 0.2), random.uniform(-0.3,-0.1), random.uniform(0.6,0.7)], 
                                 orientation=p.getQuaternionFromEuler([0, 0, random.uniform(0, np.pi)]))
         jenga_id.append(id)
     
@@ -155,60 +150,106 @@ if __name__ == "__main__":
         p.stepSimulation()
         time.sleep(1/240)
     camera.get_image()
+    status = camera.workspace(jenga_id)
+    offset_v = 0
+    offset_h = 0
+    while status:
+        
+        keys = ['id','angle','pos','max_depth']
+        jenga_list = []
+        # Get object positions and orientations of jenga blocks    
+        for id in jenga_id:
+            angle,pos,max_depth = camera.get_object_orn(id)
+            jenga_list.append(dict(zip(keys, [id, angle, pos[:3],max_depth])))
+        
+        jenga_sorted = sorted(jenga_list,key=lambda x:x['max_depth'])
+        pos = jenga_sorted[0]['pos'] 
+        angle = jenga_sorted[0]['angle']
+        current_id = jenga_sorted[0]['id']
+        p.changeVisualShape(current_id, -1, rgbaColor=[1, 0, 0, 1])
+
+        ## Stage 1 open gripper
+        print("Stage 1 Open Gripper")
+        panda.ef_control(0)
+
+        for _ in range(240):
+            p.stepSimulation()
+            time.sleep(1/240)
+
+        ## Stage 2 Set target position and orientation above block
+        print("Stage 2 Move above block")
+        target_pos = [pos[0],pos[1],pos[2]+0.1]
+        target_orn = p.getQuaternionFromEuler([np.pi,0,angle])
+        panda.move(target_pos,target_orn)
+
+        for _ in range(240):
+            p.stepSimulation()
+            time.sleep(1/240)
+
+        # Stage 3 Set target position and orientation to pick block
+        print("Stage 3 Move to block")
+        target_pos = [pos[0],pos[1],pos[2]]
+        target_orn = p.getQuaternionFromEuler([np.pi,0,angle])
+        panda.move(target_pos,target_orn)
+        
+        for _ in range(240):
+            p.stepSimulation()
+            time.sleep(1/240)
+
+        # Stage 4 Close gripper
+        print("Stage 4 Close Gripper")
+        panda.ef_control(1)
+
+        for _ in range(240):
+            p.stepSimulation()
+            time.sleep(1/240)
+        
+        # Stage 5 Set target position and orientation above block
+        print("Stage 5 Move above block")
+        target_pos = [pos[0],pos[1],pos[2]+0.1]
+        target_orn = p.getQuaternionFromEuler([np.pi,0,angle])
+        panda.move(target_pos,target_orn)
+
+        for _ in range(240):
+            p.stepSimulation()
+            time.sleep(1/240)
+
+        # Stage 6 Move to drop location
+        print("Stage 6 Move to drop location")
+        panda.move([0,0.2+offset_h,0.7+offset_v],p.getQuaternionFromEuler([np.pi,0,0]))    
+        camera.get_image()
+
+        for _ in range(480):
+            p.stepSimulation()
+            time.sleep(1/240)
+
+        # Stage 7 Open gripper
+        print("Stage 7 Open Gripper")
+        panda.ef_control(0)
+        for _ in range(240):
+            p.stepSimulation()
+            time.sleep(1/240)
+
+        # Stage 8 Move to scan
+        print("Stage 8 Move to scan")
+        panda.move([0,0,1.0],p.getQuaternionFromEuler([np.pi,0,0]))   
+        camera.get_image()
+        for _ in range(240):
+            p.stepSimulation()
+            time.sleep(1/240)
+        
+        
+
+        _,pos,_ = camera.get_object_orn(current_id)
+        if pos[1] >= 0.0:
+            jenga_id.remove(current_id)
+            offset_h = ((num_blocks-len(jenga_id)) % 3) * 0.052
+            offset_v = ((num_blocks-len(jenga_id)) / 3) * 0.03
+        status = camera.workspace(jenga_id)
+        if status == False:
+            print("Task Complete")
 
 
-    # Get object positions and orientations of jenga blocks    
-    for id in jenga_id:
-        print(id)
-        angle,pos,max_depth = camera.get_object_orn(id)
-        jenga_list.append(dict(zip(keys, [id, angle, pos[:3],max_depth])))
-    
-    jenga_sorted = sorted(jenga_list,key=lambda x:x['max_depth'])
-    print(jenga_sorted)
-    for _ in range(480):
-        p.stepSimulation()
-        time.sleep(1/240)
-    camera.get_image()
-
-    # Open gripper
-    panda.ef_control(0)
-    for _ in range(240):
-        p.stepSimulation()
-        time.sleep(1/240)
-
-    # Set target position and orientation above block
-    target_pos = [pos[0],pos[1],pos[2]+0.1]
-    target_orn = p.getQuaternionFromEuler([np.pi,0,angle])
-    current_pos,current_orn = panda.get_end_effector_state()
-    panda.move(target_pos,target_orn)
-    for _ in range(240):
-        p.stepSimulation()
-        time.sleep(1/240)
-
-    # Set target position and orientation to pick block
-    target_pos = [pos[0],pos[1],pos[2]]
-    target_orn = p.getQuaternionFromEuler([np.pi,0,angle])
-    current_pos,current_orn = panda.get_end_effector_state()
-    panda.move(target_pos,target_orn)
-    for _ in range(240):
-        p.stepSimulation()
-        time.sleep(1/240)
-
-    # Close gripper
-    panda.ef_control(1)
-    for _ in range(240):
-        p.stepSimulation()
-        time.sleep(1/240)
-
-    # Move to drop location
-    panda.move([0.2,0.2,1],target_orn)
-
-    # For debuging
-    #print("actual pos",actual_pos)
-    #print("target pos",target_pos)
-    # For debuging
-    
-    camera.get_image()
     while True:
         p.stepSimulation()
         time.sleep(1./240.)
